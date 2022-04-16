@@ -73,7 +73,7 @@ void vTIM2_Init(void)
   TIM_TimeBaseInit(TIM2, &TIM_TimeBaseStructure);
 
   /* Prescaler configuration */
-  TIM_PrescalerConfig(TIM2, (16000 - 1), TIM_PSCReloadMode_Immediate); //Timer clock = 16Mhz -> 1 tick = 1ms
+  TIM_PrescalerConfig(TIM2, ( (16000/2) - 1), TIM_PSCReloadMode_Immediate); //Timer clock = 16Mhz -> 1 tick = 1ms
 
 
 }

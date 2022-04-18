@@ -128,14 +128,20 @@ portTASK_FUNCTION(vTask1, pvParameters)
 		{
 			if (xQueueReceive(button_queue, &data_recv, 0) == pdTRUE)
 			{
-				if (data_recv == START_STOP_BUTTON)
+				#if DEBUG_LOG
+				printf("Timer was stopped \r\n");
+				#endif /*End of DEBUG_LOG */
+				TIM_Cmd(TIM2, DISABLE);
+				cur_state = TIMER_STATE_STOP;
+				if (data_recv == RESET_BUTTON)
 				{
 					#if DEBUG_LOG
-					printf("Timer was stopped \r\n");
+					printf("Timer was reset \r\n");
 					#endif /*End of DEBUG_LOG */
-					TIM_Cmd(TIM2, DISABLE);
-					cur_state = TIMER_STATE_STOP;
+					TIM_SetCounter(TIM2, 0);
 				}
+
+				
 			}
 		}
 		// Update timer value and timer string buffer to display

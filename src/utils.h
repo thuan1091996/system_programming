@@ -11,7 +11,5 @@
 
 void vUSART2_Init(void);
 void vUSART2_RX_IRQ_Init(void);
-
-void vButton_Init(void);
-void vTIM2_Init(void);
+void vSWs_Init(void);
 #endif /* UTILS_H_ */

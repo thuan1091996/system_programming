@@ -57,28 +57,7 @@ void vUSART2_RX_IRQ_Init(void) {
 }
 
 // ============================================================================
-void vTIM2_Init(void)
-{
-  TIM_TimeBaseInitTypeDef  TIM_TimeBaseStructure;
-  /* TIM2 clock enable */
-  RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);
-/* Compute the prescaler value */
-
-  /* Time base configuration */
-  TIM_TimeBaseStructure.TIM_Period = 4294967295;
-  TIM_TimeBaseStructure.TIM_Prescaler = 0;
-  TIM_TimeBaseStructure.TIM_ClockDivision = 0;
-  TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
-
-  TIM_TimeBaseInit(TIM2, &TIM_TimeBaseStructure);
-
-  /* Prescaler configuration */
-  TIM_PrescalerConfig(TIM2, (16000 - 1), TIM_PSCReloadMode_Immediate); //Timer clock = 16Mhz -> 1 tick = 1ms
-
-
-}
-// ============================================================================
-void vButton_Init(void)
+void vSWs_Init(void)
 {
     //Enable GPIOE clock
     EXTI_InitTypeDef   EXTI_InitStructure;

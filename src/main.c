@@ -2,61 +2,110 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
-#include "FreeRTOS.h"
-#include "task.h"
-#include "semphr.h"
-#include "queue.h"
+
 #include "stm32f4xx.h"
 #include "utils.h"
 #include "lcd.h"
 
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
+#include "queue.h"
+
 // Defines
-#define DEBUG_LOG 					1
+#define DEBUG_LOG 							1
+#define DEBUG_EN								0
+
+#define ALARM_LEDS_PIN					0xFF00						
+#define SWITCH_UP_PIN						8
+#define SWITCH_DOWN_PIN					9
+#define SWITCH_SET_PIN					10
+#define SWITCH_STOP_PIN					11
+#define QUEUE_MAX_LEN						20
+#define ALARM_SEC_START_ADDR		6
+#define ALARM_MIN_START_ADDR		9
+#define ALARM_HOUR_START_ADDR		12
+#define TIMER_SEC_START_ADDR		0
+#define TIMER_MIN_START_ADDR		5
+#define TIMER_HOUR_START_ADDR		10
 // Macros
 #define TASK_PRIO_UPDATE_TIME 		tskIDLE_PRIORITY + 1//highest
 #define TASK_PRIO_UPDATE_DISPLAY 	tskIDLE_PRIORITY 
-#define TASK_PRIO_ALARM 			tskIDLE_PRIORITY
+#define TASK_PRIO_ALARM 					tskIDLE_PRIORITY
+#define TASK_PRIO_CONFIG 					tskIDLE_PRIORITY
+
+#define INC(x,max_value)					(x=(x+1)%max_value)
+#define DEC(x,min_value)					(x=(x-1)%min_value)
 
 // Custom typedef
-typedef struct time
+typedef struct timer
 {
 	uint8_t sec;
 	uint8_t min;
 	uint8_t hour;
 }time_t;
 
+typedef enum mode
+{
+	CONFIG_MODE_DEFAULT=0,
+	CONFIG_ALARM_SEC,
+	CONFIG_ALARM_MIN,
+	CONFIG_ALARM_HOUR,
+	CONFIG_TIMER_SEC,
+	CONFIG_TIMER_MIN,
+	CONFIG_TIMER_HOUR,
+	CONFIG_MAX_VALUE
+}mode_t;
+
 // Variables
 time_t cur_time;
 time_t alarm_time;
-bool isAlarmRunning = false;
+bool is_alarm_active = false;
 
-//
-SemaphoreHandle_t xTimeUpdateSemaphore;
+char lcd_buf0[16]={0};
+char lcd_buf1[16]={0};
 
+
+SemaphoreHandle_t xTimeUpdateSemaphore = NULL;
+SemaphoreHandle_t xLCDMutex = NULL; 
+QueueHandle_t xSwitches_Queue = NULL;  
 
 //Function prototypes 
-void vTimeDisplayLCD(time_t time);
+void vTimeDisplayLCD();
+void vAlarm_Off();
+void vAlarm_On();
+
 void vTaskUpdateTime(void *argument);
 void vTaskUpdateDisplay(void *argument);
 void vTaskAlarm(void *argument);
-void vTIM2_Init(void) ;
+void vTaskConfig(void *argument);
+
 
 int main(void) 
 {
 	// System initializations
 	vUSART2_Init();
+	vLEDs_Init();
 	vSWs_Init();
-	//lcd_init();
+	lcd_init();
 	vTIM2_Init();
 
 	// System services
-    xTimeUpdateSemaphore = xSemaphoreCreateBinary();
+  	xTimeUpdateSemaphore = xSemaphoreCreateBinary();
 	if(xTimeUpdateSemaphore == NULL) { while(1); }
+	
+	xLCDMutex = xSemaphoreCreateMutex(); 
+	if(xLCDMutex == NULL) { while(1); }
+
+	xSwitches_Queue = xQueueCreate(QUEUE_MAX_LEN, sizeof(uint32_t));
+	if(xSwitches_Queue == NULL) { while(1); }
 
 	// System tasks
 	if(xTaskCreate( vTaskUpdateTime, "Task_TimeUpdate", configMINIMAL_STACK_SIZE, (void*const)"Task_TimeUpdate", TASK_PRIO_UPDATE_TIME, NULL) != pdPASS){ while(1); }
 	if(xTaskCreate( vTaskUpdateDisplay, "Task_DisplayUpdate", configMINIMAL_STACK_SIZE, (void*const)"Task_DisplayUpdate", TASK_PRIO_UPDATE_DISPLAY, NULL) != pdPASS){ while(1); }
 	if(xTaskCreate( vTaskAlarm, "Task_Alarm", configMINIMAL_STACK_SIZE, (void*const)"Task_Alarm", TASK_PRIO_ALARM, NULL) != pdPASS){ while(1); }
+	if(xTaskCreate( vTaskConfig, "Task_Config", configMINIMAL_STACK_SIZE, (void*const)"Task_Config", TASK_PRIO_CONFIG, NULL) != pdPASS){ while(1); }
+
 
 
 	vTaskStartScheduler(); // This should never return.
@@ -67,68 +116,55 @@ int main(void)
 }
 
 
-// ============================================================================
-
-
-/**
-  * @brief  This function handles External line 5-9 interrupt request.
-  * @param  None
-  * @retval None
-  */
-void EXTI9_5_IRQHandler(void)
+void vAlarm_On()
 {
-	// if(EXTI_GetITStatus(EXTI_Line8) != RESET)
-	// {
-	// 	static TickType_t last_tick=0; 
-	// 	TickType_t cur_tick= xTaskGetTickCountFromISR(); 
-	// 	BaseType_t xHigherPriorityTaskWoken = pdTRUE; 
-	// 	uint32_t io_pin = START_STOP_BUTTON;
-	// 	if(cur_tick >= last_tick + DB_TIMING) 
-	// 	{ 
-	// 		xQueueSendFromISR(button_queue, &io_pin, &xHigherPriorityTaskWoken); 
-	// 		last_tick = cur_tick; 
-	// 	} 
-    // /* Clear the EXTI line 0 pending bit */
-    // EXTI_ClearITPendingBit(EXTI_Line8);
-  	// }
+	GPIO_ResetBits(GPIOD, 0xFF00);
+	vTaskDelay(100 / portTICK_RATE_MS); 
+	GPIO_SetBits(GPIOD, 0xFF00);
+	vTaskDelay(100 / portTICK_RATE_MS); 
 }
 
-// ============================================================================
-
-
-/**
-  * @brief  This function handles External line 10-15 interrupt request.
-  * @param  None
-  * @retval None
-  */
-void EXTI15_10_IRQHandler(void)
+void vAlarm_Off()
 {
-	// if(EXTI_GetITStatus(EXTI_Line15) != RESET)
-	// {
-	// 		static TickType_t last_tick=0; 
-	// 			TickType_t cur_tick= xTaskGetTickCountFromISR(); 
-	// 			BaseType_t xHigherPriorityTaskWoken = pdTRUE; 
-	// 			uint32_t io_pin = RESET_BUTTON;
-	// 			if(cur_tick >= last_tick + DB_TIMING) 
-	// 			{ 
-	// 				xQueueSendFromISR(button_queue, &io_pin, &xHigherPriorityTaskWoken); 
-	// 				last_tick = cur_tick; 
-	// 			} 
-	// 	/* Clear the EXTI line 0 pending bit */
-	// 	EXTI_ClearITPendingBit(EXTI_Line15);
-	// }
+	GPIO_ResetBits(GPIOD, 0xFF00);
 }
 
-void vTimeDisplayLCD(time_t time)
+
+void vTimeDisplayLCD()
+{
+	sprintf(lcd_buf0, "ALARM:%02d:%02d:%02d ", alarm_time.hour, alarm_time.min, alarm_time.sec);
+	sprintf(lcd_buf1, "%02d : %02d : %02d", cur_time.hour, cur_time.min, cur_time.sec);
+	#if DEBUG_LOG
+	printf("\r\n");
+	printf("%s", lcd_buf0);
+	printf("\r\n");
+	printf("%s", lcd_buf1);
+	printf("\r\n");
+	#endif // DEBUG_LOG
+	lcd_move(0,0);
+	lcd_print(lcd_buf0); 
+	lcd_move(2,1); //Center align
+	lcd_print(lcd_buf1); 
+}
+
+/* Display alarm and clock */
+void vTaskUpdateDisplay(void *argument)
 {
 	while(1)
 	{
+		// Take Mutex lock
+		if(xSemaphoreTake(xLCDMutex, (10000/portTICK_PERIOD_MS)) == pdPASS) 
+		{ 
+			// Display alarm and clock
+			vTimeDisplayLCD();
+			// Release Mutex lock
+			xSemaphoreGive(xLCDMutex); 
+		}
 
-	
-
-		
+		#if DEBUG_EN
+		vTaskDelay(10000 / portTICK_RATE_MS); 
+		#endif /* DEBUG_EN */
 	}
-
 }
 
 /* Update current time based on tick counts*/
@@ -148,76 +184,218 @@ void vTaskUpdateTime(void *argument)
 			}
 		}
 		#if DEBUG_LOG
-		printf("Current time: %02d: %02d: %02d \r\n", cur_time.hour, cur_time.min, cur_time.sec);
+		// printf("Current time: %02d: %02d: %02d \r\n", cur_time.hour, cur_time.min, cur_time.sec);
 		#endif /* DEBUG_LOG */
 		xSemaphoreTake( xTimeUpdateSemaphore, portMAX_DELAY );
-
-	}
-}
-
-/* Display alarm and clock */
-void vTaskUpdateDisplay(void *argument)
-{
-	// Take Mutex lock
-	// Display alarm and clock
-	// Release Mutex lock
-	while(1)
-	{
-		vTaskDelay(1000 / portTICK_RATE_MS); 
-		
 	}
 }
 
 void vTaskAlarm(void *argument)
 {
+	bool alarm_running=false;
 	while(1)
 	{
-		vTaskDelay(1000 / portTICK_RATE_MS); 
+		if( (alarm_running) && (is_alarm_active == false) )
+		{
+			//if stop pressed
+			{
+				#if DEBUG_LOG
+				printf(" \r\n TURN OFF ACTIVE ALARM !!\r\n");
+				#endif /* End of DEBUG_LOG */
+				vAlarm_Off();
+				alarm_running = false;
+			}
+		}
+		else 
+		{
+			if ( (is_alarm_active) && (memcmp(&cur_time, &alarm_time, sizeof(time_t)) == 0) ) 
+			{
+				#if DEBUG_LOG
+				printf(" \r\n TIME UP !!\r\n");
+				#endif /* End of DEBUG_LOG */
+				vAlarm_On();
+				alarm_running = true;
+			}
+		}
+			#if DEBUG_EN
+			vTaskDelay(5000 / portTICK_RATE_MS); 
+			#else
+			vTaskDelay(100 / portTICK_RATE_MS); 
+			#endif /* DEBUG_EN */
 	}
 }
 
-void vApplicationTickHook( void )
+void vTaskConfig(void *argument)
 {
-	static uint32_t counter_tick=0;
-	if(counter_tick == 1000)
+	uint32_t queue_msg_data = 0;
+	static mode_t cur_mode = CONFIG_MODE_DEFAULT;
+	uint8_t blink_location=0;
+
+	while(1)
 	{
-		cur_time.sec++;
-		counter_tick=0;
-	
+		/* Handle button pressed */
+		if(xQueueReceive(xSwitches_Queue, &queue_msg_data, 0) == pdTRUE)
+		{
+			#if DEBUG_LOG
+			printf("pressed %d \r\n",queue_msg_data);
+			#endif /* DEBUG_LOG */
+			if(queue_msg_data == SWITCH_STOP_PIN)
+			{
+				is_alarm_active = (is_alarm_active + 1) % 2;
+				if(xSemaphoreTake(xLCDMutex, (10000/portTICK_PERIOD_MS)) == pdPASS) 
+				{
+					if(is_alarm_active)
+					{
+						#if DEBUG_LOG
+						printf(" \r\n TURN ON ALARM !!\r\n");
+						#endif /* End of DEBUG_LOG */
+
+						#if DEBUG_EN
+						lcd_buf0[14] = 'A';
+						#else
+						lcd_buf0[15] = 'A';
+						#endif /* End of DEBUG_EN */
+					}
+					else 
+					{
+						#if DEBUG_LOG
+						printf(" \r\n TURN OFF ALARM !!\r\n");
+						#endif /* End of DEBUG_LOG */
+						#if DEBUG_EN
+						lcd_buf0[14] = 0;
+						#else
+						lcd_buf0[15] = 0;
+						#endif /* End of DEBUG_EN */
+					}
+					lcd_move(0,0);
+					lcd_print(lcd_buf0); 
+
+					// Release Mutex lock
+					xSemaphoreGive(xLCDMutex); 
+				}
+			}
+			else if(queue_msg_data == SWITCH_SET_PIN)
+			{
+				INC(cur_mode, CONFIG_MAX_VALUE);
+			}
+			else 
+			{
+				switch (cur_mode) 
+				{
+					
+
+					case CONFIG_ALARM_SEC:
+					{
+						blink_location = ALARM_SEC_START_ADDR;
+						if(queue_msg_data == SWITCH_UP_PIN)
+							INC(alarm_time.sec, 60);
+						else if (queue_msg_data == SWITCH_DOWN_PIN)
+							DEC(alarm_time.sec, 60);
+
+					}
+					break;
+
+					case CONFIG_ALARM_MIN:
+					{
+						blink_location = ALARM_MIN_START_ADDR;
+						if(queue_msg_data == SWITCH_UP_PIN)
+							INC(alarm_time.min, 60);
+						else if (queue_msg_data == SWITCH_DOWN_PIN)
+							DEC(alarm_time.min, 60);
+
+					}
+					break;
+
+					case CONFIG_ALARM_HOUR:
+					{
+						blink_location = ALARM_HOUR_START_ADDR;
+						if(queue_msg_data == SWITCH_UP_PIN)
+							INC(alarm_time.hour, 24);
+						else if (queue_msg_data == SWITCH_DOWN_PIN)
+							DEC(alarm_time.hour, 24);
+
+					}
+					break;
+
+					case CONFIG_TIMER_SEC:
+					{
+						blink_location = TIMER_SEC_START_ADDR;
+						if(queue_msg_data == SWITCH_UP_PIN)
+							INC(cur_time.sec, 60);
+						else if (queue_msg_data == SWITCH_DOWN_PIN)
+							DEC(cur_time.sec, 60);
+
+					}
+					break;
+
+					case CONFIG_TIMER_MIN:
+					{
+						blink_location = TIMER_MIN_START_ADDR;
+						if(queue_msg_data == SWITCH_UP_PIN)
+							INC(cur_time.min, 60);
+						else if (queue_msg_data == SWITCH_DOWN_PIN)
+							DEC(cur_time.min, 60);
+
+					}
+					break;
+
+					case CONFIG_TIMER_HOUR:
+					{
+						blink_location = TIMER_HOUR_START_ADDR;
+						if(queue_msg_data == SWITCH_UP_PIN)
+							INC(cur_time.hour, 24);
+						else if (queue_msg_data == SWITCH_DOWN_PIN)
+							DEC(cur_time.hour, 24);
+
+					}
+					break;
+
+					default:
+					break;
+				}
+
+			}
+			// Display alarm status
+		}
+		/* Blinking configure parameter on LCD */
+		if(xSemaphoreTake(xLCDMutex, (100/portTICK_PERIOD_MS)) == pdPASS) 
+		{
+			if ( (cur_mode == CONFIG_ALARM_SEC) || (cur_mode == CONFIG_ALARM_MIN) || (cur_mode == CONFIG_ALARM_HOUR))
+			{
+				lcd_move(blink_location, 0);
+				lcd_print("  ");
+				#if DEBUG_LOG
+				lcd_buf0[blink_location] = ' '; lcd_buf0[blink_location+1] = ' ';
+				#endif /* End of DEBUG_LOG */
+			}
+			else if ( (cur_mode == CONFIG_TIMER_SEC) || (cur_mode == CONFIG_TIMER_MIN) || (cur_mode == CONFIG_ALARM_HOUR) )
+			{
+				#if DEBUG_LOG
+				lcd_buf1[blink_location] = ' '; lcd_buf1[blink_location+1] = ' ';
+				#endif /* End of DEBUG_LOG */
+				lcd_move(blink_location + 2, 1);
+				lcd_print("  ");
+			}
+			//delay_ms(100);
+			vTaskDelay(5000 / portTICK_RATE_MS); 
+			// Release Mutex lock
+			xSemaphoreGive(xLCDMutex); 
+		}
+		#if DEBUG_LOG
+		if(xSemaphoreTake(xLCDMutex, portMAX_DELAY) == pdPASS) 
+		{ 
+			printf("\r\n");
+			printf("%s", lcd_buf0);
+			printf("\r\n");
+			printf("%s", lcd_buf1);
+			printf("\r\n");
+			xSemaphoreGive(xLCDMutex); 
+		}
+		#endif // DEBUG_LOG
+
+
 	}
 }
-
-void vTIM2_Init(void) 
-{ 
-	TIM_TimeBaseInitTypeDef  TIM_TimeBaseStructure; 
-	/* TIM2 clock enable */ 
-	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE); 
-	/* Compute the prescaler value */ 
-
-	/* Time base configuration */ 
-	TIM_TimeBaseStructure.TIM_Period = 4294967295; 
-	TIM_TimeBaseStructure.TIM_Prescaler = 0; 
-	TIM_TimeBaseStructure.TIM_ClockDivision = 0; 
-	TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up; 
-	TIM_TimeBaseInit(TIM2, &TIM_TimeBaseStructure); 
-
-	/* Prescaler configuration */ 
-	TIM_PrescalerConfig(TIM2, ( (16000/2) - 1), TIM_PSCReloadMode_Immediate); //Timer clock = 16Mhz -> 1 tick = 1 ms 
-	TIM_SetCompare2(TIM2, 10000); //Interrupt every 1s //TODO: Fixme
-	TIM_ITConfig(TIM2, TIM_IT_CC2, ENABLE);
-
-	/* Enable the TIM2 Trigger and commutation interrupt */
-	NVIC_InitTypeDef NVIC_InitStructure;
-	NVIC_InitStructure.NVIC_IRQChannel = TIM2_IRQn;
-	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 7;
-	NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
-	NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
-	NVIC_PriorityGroupConfig(NVIC_PriorityGroup_4);
-	NVIC_Init(&NVIC_InitStructure);   
-	
-	  /* TIM2 counter enable */
-  	TIM_Cmd(TIM2, ENABLE);
-} 
 
 void TIM2_IRQHandler(void)
 {
@@ -232,5 +410,60 @@ void TIM2_IRQHandler(void)
 			xSemaphoreGiveFromISR( xTimeUpdateSemaphore, &xHigherPriorityTaskWoken );
 			portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
 	  }
-	
+}
+
+void EXTI9_5_IRQHandler(void)
+{
+	if ((EXTI_GetITStatus(1 << SWITCH_UP_PIN) != RESET) || (EXTI_GetITStatus(1 << SWITCH_DOWN_PIN) != RESET))
+	{
+		static TickType_t last_tick = 0; 
+		TickType_t cur_tick= xTaskGetTickCountFromISR(); 
+		BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+		uint32_t pressed_sw = 0;
+
+		if(EXTI_GetITStatus(1 << SWITCH_UP_PIN) != RESET)
+		{
+			pressed_sw = SWITCH_UP_PIN;
+			EXTI_ClearITPendingBit(1 << SWITCH_UP_PIN);
+		}
+		else if (EXTI_GetITStatus(1 << SWITCH_DOWN_PIN) != RESET)
+		{
+			pressed_sw = SWITCH_DOWN_PIN;
+			EXTI_ClearITPendingBit(1 << SWITCH_DOWN_PIN);
+		}
+		if(cur_tick >= (last_tick + 5000))
+		{ 
+			xQueueSendFromISR(xSwitches_Queue, &pressed_sw, &xHigherPriorityTaskWoken); 
+			last_tick = cur_tick; 
+		}
+  	}
+}
+
+
+void EXTI15_10_IRQHandler(void)
+{
+	if((EXTI_GetITStatus(1 << SWITCH_SET_PIN) != RESET) || (EXTI_GetITStatus(1 << SWITCH_STOP_PIN) != RESET))
+	{
+		
+		static TickType_t last_tick = 0; 
+		TickType_t cur_tick= xTaskGetTickCountFromISR(); 
+		BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+		uint32_t pressed_sw = 0;
+		if(EXTI_GetITStatus(1 << SWITCH_SET_PIN) != RESET)
+		{
+			pressed_sw = SWITCH_SET_PIN;
+			EXTI_ClearITPendingBit(1 << SWITCH_SET_PIN);
+		}
+		else if (EXTI_GetITStatus(1 << SWITCH_STOP_PIN) != RESET)
+		{
+			pressed_sw = SWITCH_STOP_PIN;
+			EXTI_ClearITPendingBit(1 << SWITCH_STOP_PIN);
+		}
+		if(cur_tick >= (last_tick + 5000)) 
+		{ 
+			xQueueSendFromISR(xSwitches_Queue, &pressed_sw, &xHigherPriorityTaskWoken); 
+			last_tick = cur_tick; 
+		} 
+
+  	}
 }

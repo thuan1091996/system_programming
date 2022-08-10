@@ -3,8 +3,8 @@
 #include "utils.h"
 
 
-#define SWITCHES_PRIORITY          5	//Priority should be "lower" than configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY (which =5)
-#define TIM2_HW_PRIORITY			     5
+#define SWITCHES_PRIORITY          7	//Priority should be "lower" than configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY (which =5)
+#define TIM2_HW_PRIORITY			     7
 
 void vUSART2_Init(void) 
 {
@@ -53,7 +53,7 @@ void vUSART2_RX_IRQ_Init(void)
     NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
     NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
-    NVIC_SetPriority(USART2_IRQn, 11);
+    //NVIC_SetPriority(USART2_IRQn, 11);
 }
 
 void vLEDs_Init(void)
@@ -141,7 +141,7 @@ void vTIM2_Init(void)
 	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = TIM2_HW_PRIORITY;
 	NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
 	NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
-	NVIC_PriorityGroupConfig(NVIC_PriorityGroup_4);
+	//NVIC_PriorityGroupConfig(NVIC_PriorityGroup_4);
 	NVIC_Init(&NVIC_InitStructure);   
 	
 	/* TIM2 counter enable */

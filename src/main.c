@@ -29,8 +29,8 @@
 #define TIMER_MIN_START_ADDR		7
 #define TIMER_HOUR_START_ADDR		2
 // Macros
-#define TASK_PRIO_UPDATE_TIME 		tskIDLE_PRIORITY + 2//highest
-#define TASK_PRIO_UPDATE_DISPLAY 	tskIDLE_PRIORITY 
+#define TASK_PRIO_UPDATE_TIME 		tskIDLE_PRIORITY + 2
+#define TASK_PRIO_UPDATE_DISPLAY 	tskIDLE_PRIORITY + 3	//highest
 #define TASK_PRIO_ALARM 					tskIDLE_PRIORITY + 1
 #define TASK_PRIO_CONFIG 					tskIDLE_PRIORITY 
 
@@ -71,9 +71,9 @@ SemaphoreHandle_t xLCDMutex = NULL;
 QueueHandle_t xSwitches_Queue = NULL;  
 
 //Function prototypes 
-void vTimeDisplayLCD();
-void vAlarm_Off();
-void vAlarm_On();
+void vTimeDisplayLCD(void);
+void vAlarm_Off(void);
+void vAlarm_On(void);
 
 void vTaskUpdateTime(void *argument);
 void vTaskUpdateDisplay(void *argument);
@@ -92,7 +92,7 @@ int main(void)
 	vTIM2_Init();
 
 	// System services
-  	xTimeUpdateSemaphore = xSemaphoreCreateBinary();
+  xTimeUpdateSemaphore = xSemaphoreCreateBinary();
 	if(xTimeUpdateSemaphore == NULL) { while(1); }
 	
 	xLCDMutex = xSemaphoreCreateMutex(); 
@@ -198,14 +198,12 @@ void vTaskUpdateDisplay(void *argument)
 		#if DEBUG_EN
 		vTaskDelay(10000 / portTICK_RATE_MS); 
 		#else
-		vTaskDelay(250 / portTICK_RATE_MS); 
+		vTaskDelay(500 / portTICK_RATE_MS); 
 		#endif /* DEBUG_EN */
 	}
 }
 
 /* Update current time based on tick counts*/
-volatile uint32_t simulated_test_sw = SWITCH_DOWN_PIN;
-volatile bool g_simulating_pressed_sw = true;
 void vTaskUpdateTime(void *argument)
 {
 	while(1)
@@ -221,23 +219,18 @@ void vTaskUpdateTime(void *argument)
 				cur_time.hour = (cur_time.hour + 1) % 24; 
 			}
 		}
-		if(g_simulating_pressed_sw)
-		xQueueSendToBack(xSwitches_Queue, (const void *const) &simulated_test_sw, portMAX_DELAY);
-		#if DEBUG_EN
-
-		#endif /* End of DEBUG_EN */
 		#if DEBUG_LOG
 		// printf("Current time: %02d: %02d: %02d \r\n", cur_time.hour, cur_time.min, cur_time.sec);
 		#endif /* DEBUG_LOG */
 		xSemaphoreTake( xTimeUpdateSemaphore, portMAX_DELAY );
 	}
 }
-uint8_t blink_location=0;
-static mode_t cur_mode = CONFIG_MODE_DEFAULT+1;
+
 void vTaskConfig(void *argument)
 {
 	uint32_t queue_msg_data = 0;
-
+	uint8_t blink_location=0;
+	mode_t cur_mode = CONFIG_MODE_DEFAULT;
 	while(1)
 	{
 		/* Handle button pressed */
@@ -283,7 +276,7 @@ void vTaskConfig(void *argument)
 			}
 			else if(queue_msg_data == SWITCH_SET_PIN)
 			{
-				INC(cur_mode, 0, CONFIG_MAX_VALUE);
+				INC(cur_mode, CONFIG_MODE_DEFAULT, CONFIG_MAX_VALUE);
 			}
 
 			switch (cur_mode) 
@@ -389,7 +382,7 @@ void vTaskConfig(void *argument)
 				xSemaphoreGive(xLCDMutex); 
 			}
 		}
-		vTaskDelay(500 / portTICK_RATE_MS); 
+		vTaskDelay(750 / portTICK_RATE_MS); 
 
 		
 		#if DEBUG_LOG
@@ -423,6 +416,7 @@ void TIM2_IRQHandler(void)
 	  }
 }
 
+
 void EXTI9_5_IRQHandler(void)
 {
 	if ((EXTI_GetITStatus(1 << SWITCH_UP_PIN) != RESET) || (EXTI_GetITStatus(1 << SWITCH_DOWN_PIN) != RESET))
@@ -449,6 +443,7 @@ void EXTI9_5_IRQHandler(void)
 		}
   	}
 }
+
 
 
 void EXTI15_10_IRQHandler(void)

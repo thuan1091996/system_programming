@@ -2,10 +2,6 @@
 #include "stm32f4_discovery.h"
 #include "utils.h"
 
-
-#define START_STOP_BUTTON_PRIO          6	//Priority should be "lower" than configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY (which =5)
-#define RESET_BUTTON_PRIO               7
-
 // ============================================================================
 void vUSART2_Init(void) {
     USART_ClockInitTypeDef USART_ClockInitStruct;
@@ -54,24 +50,4 @@ void vUSART2_RX_IRQ_Init(void) {
     NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
     NVIC_SetPriority(USART2_IRQn, 11);
-}
-
-// ============================================================================
-void vTIM2_Init(void)
-{
-  TIM_TimeBaseInitTypeDef  TIM_TimeBaseStructure;
-  /* TIM2 clock enable */
-  RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);
-/* Compute the prescaler value */
-
-  /* Time base configuration */
-  TIM_TimeBaseStructure.TIM_Period = 4294967295;
-  TIM_TimeBaseStructure.TIM_Prescaler = 0;
-  TIM_TimeBaseStructure.TIM_ClockDivision = 0;
-  TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
-
-  TIM_TimeBaseInit(TIM2, &TIM_TimeBaseStructure);
-
-  /* Prescaler configuration */
-  TIM_PrescalerConfig(TIM2, ( (16000/2) - 1), TIM_PSCReloadMode_Immediate); //Timer clock = 16Mhz -> 1 tick = 1ms
 }

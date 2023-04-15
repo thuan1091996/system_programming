@@ -29,6 +29,7 @@
 
 #define TESTING						(1)
 
+#define TIM4_RELOAD_VALUE			(10000)
 
 /******************************************************************************
 * Module Variable Definitions
@@ -38,8 +39,8 @@ xTaskHandle hTask2;
 xTaskHandle hPrintTask;
 
 #if TESTING
-volatile uint32_t auto_reload = 1000;
-volatile uint32_t compare_value = 500;
+volatile uint32_t auto_reload = 10000;
+volatile uint32_t compare_value = 9000;
 volatile uint32_t g_test = 1;
 #endif /* End of TESTING */
 
@@ -208,7 +209,7 @@ void thermo_init(void)
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_100MHz;
     GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
     GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL ;
-    GPIO_Init( GPIOB, &GPIO_InitStructure ); 
+    GPIO_Init( GPIOD, &GPIO_InitStructure ); 
 
     /* Connect TIM4 pins to AF2 */  
     GPIO_PinAFConfig( GPIOD, GPIO_PinSource15, GPIO_AF_TIM4);
@@ -227,11 +228,7 @@ void tim4_init(void)
 	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM4, ENABLE);
 
 	/* Time base configuration */
-	#if TESTING
-	TIM_TimeBaseStructure.TIM_Period = auto_reload; // TODO: Auto reload value
-	#else
-	TIM_TimeBaseStructure.TIM_Period = 4294967295; // TODO: Auto reload value
-	#endif /* End of TESTING */
+	TIM_TimeBaseStructure.TIM_Period = TIM4_RELOAD_VALUE;
 	
 	
 
@@ -242,11 +239,11 @@ void tim4_init(void)
 	TIM_TimeBaseInit(TIM4, &TIM_TimeBaseStructure);
 
 	/* Prescaler configuration */
-	TIM_PrescalerConfig(TIM4, ( (16000/2) - 1), TIM_PSCReloadMode_Immediate); //Timer clock = 16Mhz -> 1 tick = 1ms
+	TIM_PrescalerConfig(TIM4, ( (160/2) - 1), TIM_PSCReloadMode_Immediate); //Timer clock = 16Mhz -> 1 tick = 1ms
 
 	TIM_OCInitTypeDef  TIM_OCInitStructure;
 	 /* PWM1 Mode configuration: Channel4 */
-    TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM2; // output is active low when the counter value is less than the OC value
+    TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1; // output is active low when the counter value is less than the OC value
     TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
 
 	#if TESTING
@@ -254,10 +251,10 @@ void tim4_init(void)
 	#else
     TIM_OCInitStructure.TIM_Pulse = 0; // TODO: Compare value
 	#endif /* End of TESTING */
-    TIM_OCInitStructure.TIM_OCPolarity = TIM_OCNPolarity_Low;	
-	TIM_OC1Init( TIM4, &TIM_OCInitStructure );
+    TIM_OCInitStructure.TIM_OCPolarity = TIM_OCNPolarity_High;	
+	TIM_OC4Init( TIM4, &TIM_OCInitStructure );
 
-    TIM_OC1PreloadConfig( TIM4, TIM_OCPreload_Enable );
+    TIM_OC4PreloadConfig( TIM4, TIM_OCPreload_Enable );
     TIM_ARRPreloadConfig( TIM4, ENABLE );
 
     /* TIM4 enable counter */
